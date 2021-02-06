@@ -5,13 +5,19 @@ FROM python:3.9-slim-buster
 WORKDIR /app
 
 # copy the dependencies file to the working directory
-COPY requirements.txt .
+COPY app/requirements.txt .
 
 # install dependencies
 RUN pip install -r requirements.txt
 
 # copy the content of the local src directory to the working directory
-COPY src/ .
+COPY app/src/ .
+
+# make entrypoint.sh executable
+# RUN chmod +x entrypoint.sh
+
+# use entrypoint.sh as entrypoint
+# ENTRYPOINT ["entrypoint.sh"]
 
 # command to run on container start
 CMD [ "python", "./server.py" ] 
