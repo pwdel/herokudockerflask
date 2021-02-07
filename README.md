@@ -96,7 +96,7 @@ services:
     volumes:
       - ./app/:/src/
     ports:
-      - 5002:5000
+      - 5000:5000
     env_file:
       - ./.env.dev
 ```
@@ -107,7 +107,7 @@ The above yml file is doing the following:
 1. Building the web service at / root directory, looking for the Dockerfile.
 2. Running the server.py at 0.0.0.0
 3. Attaching any volumes.
-4. Running on port 5002, because we're already using port 5000 and 5001 for other projects.
+4. Originally we ran on port 5002, and we later switched back to port 5000.  We were running on port 5002, because we're already using port 5000 and 5001 for other projects.
 5. Reference env file, which we need to create.
 
 So we create a .env.dev file in the project root to store environmental variables for development.
@@ -127,7 +127,7 @@ We run the following to run the entire app, in detached mode. This builds, (re)c
 ```
 docker-compose up -d
 ```
-Once we have a successful message, we should be able to connect to localhost:5002 and see the app.
+Once we have a successful message, we should be able to connect to localhost:5002 (or localhost:5000 after switching back) and see the app.
 
 If this didn't work then you can run the command to look at log errors: "sudo docker-compose logs"
 
@@ -171,14 +171,9 @@ Moving from development to production is always a challenge.  Different environm
 
 After pushing our dockerized app to prod above, right away we see a few errors, and a failure to serve.
 
-```
-2021-02-07T03:43:28.636078+00:00 app[web.1]:    WARNING: This is a development server. Do not use it in a production deployment.
+#### Serving on Port 5000
 
-2021-02-07T03:43:28.636158+00:00 app[web.1]:    Use a production WSGI server instead.
-```
-So right away, we need to make sure that we set things to production, and this means essentially working with multiple environments, which means setting up a docker-compose.prod.yml file.
-
-We also see an error:
+We see an error:
 
 ```
 2021-02-07T03:44:26.158480+00:00 heroku[web.1]: Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch
@@ -204,7 +199,28 @@ Upon changing the code, we need to rebuild our Docker Image and re-run the conta
 
 Fortunately, I created a shell script to help us stop and remove all Docker containers and images, as well as other useful rebuild scripts which can be found [here](https://github.com/pwdel/dockerlubuntu/tree/main/lib).
 
+After getting rid of what we need to, we then run:
 
+```
+sudo docker-compose build 
+
+sudo docker-compose up -d
+```
+
+Upon running this, we now see the error "web_1  | NameError: name 'os' is not defined" - therefore, we have to add, "import os" within the server.py file.
+
+Upon importing os, we are able to run the Docker container.
+
+#### Using a Production WSGI Server
+
+We also see another error:
+
+```
+2021-02-07T03:43:28.636078+00:00 app[web.1]:    WARNING: This is a development server. Do not use it in a production deployment.
+
+2021-02-07T03:43:28.636158+00:00 app[web.1]:    Use a production WSGI server instead.
+```
+So right away, we need to make sure that we set things to production, and this means essentially working with multiple environments, which means setting up a docker-compose.prod.yml file.
 
 ```
 version: '3.7'
@@ -217,19 +233,113 @@ services:
       - 5000:5000
     env_file:
       - ./.env.prod
-    depends_on:
-      - db
-  db:
-    image: postgres:12-alpine
-    volumes:
-      - postgres_data:/var/lib/postgresql/data/
-    env_file:
-      - ./.env.prod.db
+#    depends_on:
+#      - db
+#  db:
+#    image: postgres:12-alpine
+#    volumes:
+#      - postgres_data:/var/lib/postgresql/data/
+#    env_file:
+#      - ./.env.prod.db
 
-volumes:
-  postgres_data:
+#volumes:
+#  postgres_data:
+```
+Note in the above file, we're commenting out the volume and database information for now because we don't need it.
+
+With the above in place, we can create our .env.prod file:
+
+```
+FLASK_APP=app/server.py
+FLASK_ENV=production
+DATABASE_URL=postgresql://hello_flask:hello_flask@db:5432/hello_flask_prod
+SQL_HOST=db
+SQL_PORT=5432
+DATABASE=postgres
+```
+We then bring down the containers that we had activated earlier:
+
+```
+sudo docker-compose down
 ```
 
+...and we build the new production images using the prod.yml:
+
+```
+docker-compose -f docker-compose.prod.yml up -d --build
+```
+
+Of course, if we run this, then we get an error, 
+
+"ERROR: for web  Cannot start service web: OCI runtime create failed: container_linux.go:349: starting container process caused "exec: \"gunicorn\": executable file not found in $PATH: unknown"
+
+This is because we never included gunicorn, the [WSGI HTTP server Gunicorn](https://gunicorn.org/) in the requirements.txt file.
+
+When we want to add a database, we will later also install [flask-sqlalchemy](https://flask-sqlalchemy.palletsprojects.com/en/2.x/) and [psycopg2](https://pypi.org/project/psycopg2/), for the database.
+
+```
+Flask==1.1.2
+Flask-SQLAlchemy==2.4.1
+gunicorn==20.0.4
+```
+
+Trying again...we do docker-compose build and docker-compose up and see that a web service gets started.  We see that this web service has an output on the command line, and upon visiting localhost:5000 we see a result.  Each time we visit localhost:5000 we get an addiontal message service on our local command line:
+
+```
+web_1  | 172.19.0.1 - - [07/Feb/2021 18:50:40] "GET / HTTP/1.1" 200 -
+```
+We can also take a look at our processes.
+
+| CONTAINER ID | IMAGE                 | COMMAND                | CREATED       | STATUS        | PORTS                  | NAMES                   |
+|--------------|-----------------------|------------------------|---------------|---------------|------------------------|-------------------------|
+| cacee7836f5b | herokudockerflask_web | "python server.py ru…" | 9 minutes ago | Up 23 seconds | 0.0.0.0:5000->5000/tcp | herokudockerflask_web_1 |
+
+Then, we can run the following to push this to Heroku again.  First, we log into the docker container registry:
+
+```
+sudo docker login --username=_ --password=$(heroku auth:token) registry.heroku.com
+```
+
+Push the container to the web as follows:
+
+```
+sudo heroku container:push web --app ancient-hollows-77002
+```
+
+You should get a success message that says, "Your image has been successfully pushed. You can now release it with the 'container:release' command."
+
+Then you can do a release, as follows:
+
+```
+heroku container:release web --app ancient-hollows-77002
+```
+
+We should get a message that says, "Releasing images web to ancient-hollows-77002... done"
+
+Upon successful release, we can visit our URL live on the web at [https://ancient-hollows-77002.herokuapp.com/](https://ancient-hollows-77002.herokuapp.com/) to view the message, "Hello World Little Dude!"
+
+#### How Does the Heroku container:push Command Know Which Container to Use?
+
+Basically, when you run, ```heroku container:push web``` [per the documentation](https://devcenter.heroku.com/articles/container-registry-and-runtime) the heroku cli is building pushing an image to a container registry, where it is getting built.  The container is then, "released" from that registry.
+
+https://blog.heroku.com/container-registry-and-runtime
+
+How does heroku container:push know which image to use?
+
+| REPOSITORY                                    | TAG             | IMAGE ID     | CREATED        | SIZE  |
+|-----------------------------------------------|-----------------|--------------|----------------|-------|
+| herokudockerflask_web                         | latest          | b827eadbbef7 | 22 minutes ago | 135MB |
+| registry.heroku.com/ancient-hollows-77002/web | latest          | b827eadbbef7 | 22 minutes ago | 135MB |
+| python                                        | 3.9-slim-buster | d5d352d7d840 | 5 days ago     | 114MB |
+
+
+Basically within the command:
+
+```
+sudo heroku container:push web --app ancient-hollows-77002
+
+```
+...the term, --app is the name of our app.  If our app was named something else, like, my_app or my_widget_thingy, then we would put --my_app or --my_widget_thingy.
 
 ### Create entrypoint.sh if Needed
 
@@ -258,10 +368,7 @@ python manage.py create_db
 exec "$@"
 ```
 
-
-
-
-## Other Notes to Add
+## Other Things to Google Related to this Project
 
 * Environmental Variables on Docker
 
