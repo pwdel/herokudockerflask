@@ -167,42 +167,67 @@ To ensure that the app has been deployed.
 
 ### Debugging the Deployment
 
+Moving from development to production is always a challenge.  Different environments causing mix-ups, failure to set environmental variables, and unforseen errors abound when moving from .dev to .prod.
+
+After pushing our dockerized app to prod above, right away we see a few errors, and a failure to serve.
+
 ```
-
-
-2021-02-07T03:43:22.392969+00:00 heroku[web.1]: State changed from starting to crashed
-
-2021-02-07T03:43:22.398916+00:00 heroku[web.1]: State changed from crashed to starting
-
-2021-02-07T03:43:25.560637+00:00 heroku[web.1]: Starting process with command `python ./server.py`
-
-2021-02-07T03:43:28.636000+00:00 app[web.1]:  * Serving Flask app "server" (lazy loading)
-
-2021-02-07T03:43:28.636032+00:00 app[web.1]:  * Environment: production
-
 2021-02-07T03:43:28.636078+00:00 app[web.1]:    WARNING: This is a development server. Do not use it in a production deployment.
 
 2021-02-07T03:43:28.636158+00:00 app[web.1]:    Use a production WSGI server instead.
+```
+So right away, we need to make sure that we set things to production, and this means essentially working with multiple environments, which means setting up a docker-compose.prod.yml file.
 
-2021-02-07T03:43:28.636228+00:00 app[web.1]:  * Debug mode: off
+We also see an error:
 
-2021-02-07T03:43:28.639911+00:00 app[web.1]:  * Running on http://0.0.0.0:5000/ (Press CTRL+C to quit)
-
-2021-02-07T03:43:59.856613+00:00 heroku[router]: at=error code=H20 desc="App boot timeout" method=GET path="/" host=ancient-hollows-77002.herokuapp.com request_id=b582e826-5850-4e23-9d3d-1b068139548e fwd="207.153.48.94" dyno= connect= service= status=503 bytes= protocol=https
-
+```
 2021-02-07T03:44:26.158480+00:00 heroku[web.1]: Error R10 (Boot timeout) -> Web process failed to bind to $PORT within 60 seconds of launch
+```
+Basically, this is because we didn't set the Port to 5000 within the flask app itself. We can fix this by two additions to the server.py app.
 
-2021-02-07T03:44:26.205906+00:00 heroku[web.1]: Stopping process with SIGKILL
+```
+from flask import Flask
+server = Flask(__name__)
+# set the port to 5000 for Heroku
+port = int(os.environ.get("PORT", 5000))
 
-2021-02-07T03:44:26.301154+00:00 heroku[web.1]: Process exited with status 137
+@server.route("/")
+def hello():
+    return "Hello World, Little Dude!"
 
-2021-02-07T03:44:26.420639+00:00 heroku[web.1]: State changed from starting to crashed
+if __name__ == "__main__":
+# set port = port for Heroku
+   server.run(host='0.0.0.0',port=port) 
+```
 
-2021-02-07T03:44:26.837285+00:00 heroku[router]: at=error code=H10 desc="App crashed" method=GET path="/" host=ancient-hollows-77002.herokuapp.com request_id=a0c76b4b-e402-41d2-92a1-c12e79a9b61f fwd="207.153.48.94" dyno= connect= service= status=503 bytes= protocol=https
+Upon changing the code, we need to rebuild our Docker Image and re-run the container. Don't forget that you have to delete the old container as well.
 
-2021-02-07T03:44:27.233645+00:00 heroku[router]: at=error code=H10 desc="App crashed" method=GET path="/favicon.ico" host=ancient-hollows-77002.herokuapp.com request_id=1ab4e5d2-db5e-47ce-9930-ff2d96ff1ec8 fwd="207.153.48.94" dyno= connect= service= status=503 bytes= protocol=https
+Fortunately, I created a shell script to help us stop and remove all Docker containers and images, as well as other useful rebuild scripts which can be found [here](https://github.com/pwdel/dockerlubuntu/tree/main/lib).
 
 
+
+```
+version: '3.7'
+
+services:
+  web:
+    build: ./services/web
+    command: gunicorn --bind 0.0.0.0:5000 manage:app
+    ports:
+      - 5000:5000
+    env_file:
+      - ./.env.prod
+    depends_on:
+      - db
+  db:
+    image: postgres:12-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    env_file:
+      - ./.env.prod.db
+
+volumes:
+  postgres_data:
 ```
 
 
@@ -251,3 +276,4 @@ exec "$@"
 * [Local Development with Docker Compose](https://devcenter.heroku.com/articles/local-development-with-docker-compose)
 * [Container Registry and Runtime](https://devcenter.heroku.com/articles/container-registry-and-runtime)
 * [Build Docker Images on Heroku](https://devcenter.heroku.com/articles/build-docker-images-heroku-yml)
+* [Writing a Script to Remove and Restart Docker Images](https://stackoverflow.com/questions/41322541/rebuild-docker-container-on-file-changes)
